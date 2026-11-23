@@ -16,7 +16,7 @@
 
 use harvestlock_escrow::{EscrowContract, EscrowContractClient, OracleConfig, Status};
 use proptest::prelude::*;
-use soroban_sdk::testutils::{Address as _, Ledger as _};
+use soroban_sdk::testutils::{Address as _, EnvTestConfig, Ledger as _};
 use soroban_sdk::{contract, contractimpl, contracttype, token, Address, Env, Symbol, Vec};
 
 const TOTAL_AMOUNT: i128 = 1_000_000;
@@ -72,7 +72,10 @@ fn scene(
     start: u64,
     with_oracle: bool,
 ) -> Scene {
-    let env = Env::default();
+    // Generated cases should not emit one snapshot file per fixture.
+    let env = Env::new_with_config(EnvTestConfig {
+        capture_snapshot_at_drop: false,
+    });
     env.mock_all_auths();
     env.ledger().set_timestamp(start);
 
