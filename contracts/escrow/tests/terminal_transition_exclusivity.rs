@@ -61,6 +61,7 @@ struct Scene {
     env: Env,
     contract: EscrowContractClient<'static>,
     buyer: Address,
+    claim_window: u64,
     start: u64,
 }
 
@@ -117,6 +118,7 @@ fn scene(
         env,
         contract,
         buyer,
+        claim_window,
         start,
     }
 }
@@ -124,15 +126,26 @@ fn scene(
 fn ready_for_delivery(s: &Scene, prefix_claims_advances: bool, elapsed: u64) {
     s.contract.lock();
     s.contract.release_advance_1();
+    let mut prefix_time = s.start;
     if prefix_claims_advances {
         s.contract.claim_advance_1();
+    } else {
+        prefix_time += s.claim_window + 1;
+        s.env.ledger().set_timestamp(prefix_time);
+        s.contract.reclaim_advance_1();
     }
     s.contract.mark_checkpoint();
     s.contract.release_advance_2();
     if prefix_claims_advances {
         s.contract.claim_advance_2();
+    } else {
+        prefix_time += s.claim_window + 1;
+        s.env.ledger().set_timestamp(prefix_time);
+        s.contract.reclaim_advance_2();
     }
-    s.env.ledger().set_timestamp(s.start + elapsed);
+    s.env
+        .ledger()
+        .set_timestamp(prefix_time.max(s.start + elapsed));
     s.contract.ready_for_delivery();
 }
 
@@ -180,7 +193,7 @@ proptest! {
         offset in arb_offset(),
         prefix_claims in any::<bool>(),
     ) {
-        let delivery_window = 200_000;
+        let delivery_window = 300_000;
         let funded = scene(claim_window, remainder_window, delivery_window, start, false);
         ready_for_delivery(&funded, prefix_claims, elapsed);
         let deadline = funded.contract.get_commitment().remainder_deadline;
@@ -204,7 +217,7 @@ proptest! {
         offset in arb_offset(),
         prefix_claims in any::<bool>(),
     ) {
-        let delivery_window = 200_000;
+        let delivery_window = 300_000;
         let funded = scene(claim_window, remainder_window, delivery_window, start, true);
         ready_and_funded(&funded, prefix_claims, elapsed);
         funded.contract.confirm_delivery(&CONTRACTED_QUANTITY, &0);
@@ -232,7 +245,7 @@ proptest! {
         elapsed in arb_prefix_elapsed(),
         offset in arb_offset(),
     ) {
-        let claim = scene(claim_window, remainder_window, 200_000, start, false);
+        let claim = scene(claim_window, remainder_window, 300_000, start, false);
         claim.contract.lock();
         claim.env.ledger().set_timestamp(start + elapsed);
         claim.contract.release_advance_1();
@@ -240,7 +253,7 @@ proptest! {
         claim.env.ledger().set_timestamp(around(deadline, offset));
         let claim_succeeds = claim.contract.try_claim_advance_1().is_ok();
 
-        let reclaim = scene(claim_window, remainder_window, 200_000, start, false);
+        let reclaim = scene(claim_window, remainder_window, 300_000, start, false);
         reclaim.contract.lock();
         reclaim.env.ledger().set_timestamp(start + elapsed);
         reclaim.contract.release_advance_1();
@@ -259,7 +272,7 @@ proptest! {
         offset in arb_offset(),
         prefix_claims in any::<bool>(),
     ) {
-        let claim = scene(claim_window, remainder_window, 200_000, start, false);
+        let claim = scene(claim_window, remainder_window, 300_000, start, false);
         claim.contract.lock();
         claim.env.ledger().set_timestamp(start + elapsed);
         claim.contract.release_advance_1();
@@ -272,7 +285,7 @@ proptest! {
         claim.env.ledger().set_timestamp(around(deadline, offset));
         let claim_succeeds = claim.contract.try_claim_advance_2().is_ok();
 
-        let reclaim = scene(claim_window, remainder_window, 200_000, start, false);
+        let reclaim = scene(claim_window, remainder_window, 300_000, start, false);
         reclaim.contract.lock();
         reclaim.env.ledger().set_timestamp(start + elapsed);
         reclaim.contract.release_advance_1();
@@ -291,7 +304,7 @@ proptest! {
     fn delivery_confirmation_and_nondelivery_reclaim_are_exclusive(
         claim_window in arb_window(),
         remainder_window in arb_window(),
-        delivery_window in 200_000u64..1_000_000,
+        delivery_window in 300_000u64..1_000_000,
         start in arb_start(),
         elapsed in arb_prefix_elapsed(),
         offset in arb_offset(),
